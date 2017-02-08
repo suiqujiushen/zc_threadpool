@@ -31,8 +31,14 @@ zc_threadpool_create(int thread_num)
 	}
 	int i;
 	for (i = 0; i < pool->_thread_num; ++i) {
-		pthread_create(&pool->_threads[i], NULL, thread_func, pool);
+		if (0 != pthread_create(&pool->_threads[i], NULL, thread_func, pool)) {
+			printf("pthread_create err\n");
+			// kill the existing threads and free resources
+			zc_threadpool_destroy(pool, IMMEDIATELY);
+			return NULL;
+		}
 	}
+	pool->_shutdown = NOSTOP;
 
 	return pool;
 }
@@ -55,18 +61,24 @@ zc_threadpool_add_task(zc_threadpool_t *pool,
 }
 
 void 
-zc_threadpool_destroy(zc_threadpool_t *pool)
+zc_threadpool_destroy(zc_threadpool_t *pool, shutdown_status_t shutdown)
 {
 	if (pool) {
 		pthread_mutex_lock(&pool->_lock);
-		while (!queue_empty(pool->_task_queue)) {
-			task_t *task = queue_pop(pool->_task_queue);
-			free(task);
+		pool->_shutdown = (shutdown == GRACEFULLY) ? GRACEFULLY : IMMEDIATELY;
+		if (pool->_shutdown == IMMEDIATELY) {
+			while (!queue_empty(pool->_task_queue)) {
+				task_t *task = queue_pop(pool->_task_queue);
+				free(task);
+			}
+		}
+		pthread_cond_broadcast(&pool->_cond);
+		pthread_mutex_unlock(&pool->_lock);
+		int i = 0;
+		for (; i < pool->_thread_num; ++i) {
+			pthread_join(pool->_threads[i], NULL);
 		}
 		free(pool->_task_queue);
-		int i = 0;
-		for (; i < pool->_thread_num; ++i)
-			pthread_cancel(pool->_threads[i]);
 		free(pool->_threads);
 		pthread_mutex_destroy(&pool->_lock);
 		pthread_cond_destroy(&pool->_cond);
@@ -81,11 +93,12 @@ thread_func(void *arg)
 	task_t *task;
 	while (1) {
 		pthread_mutex_lock(&pool->_lock);
-		while (queue_empty(pool->_task_queue) && !pool->_stop) {
+		while (queue_empty(pool->_task_queue) && pool->_shutdown == NOSTOP) {
 			pthread_cond_wait(&pool->_cond, &pool->_lock);
 		}
-		if (pool->_stop)
+		if (pool->_shutdown == IMMEDIATELY || (pool->_shutdown == GRACEFULLY && queue_empty(pool->_task_queue))) {
 			break;
+		}
 		task = queue_pop(pool->_task_queue);
 		pthread_mutex_unlock(&pool->_lock);
 		(*(task->_func))(task->_arg);
@@ -98,32 +111,29 @@ thread_func(void *arg)
 
 static int 
 queue_empty(queue_t *q) {
-	int ret = 0;
-	ret = (q->_front == NULL) ? 1 : 0;
-
-	return ret;
+	return ((q->_front == NULL) ? 1 : 0);
 }
 
 static int 
 queue_push(queue_t *q, task_t *task) {
 	if (!q || !task)
 		return -1;
-	if (!q->_front) {
+	if (queue_empty(q)) {
 		q->_front = q->_rear = task;
 	}
 	else {
 		q->_rear->next = task;
-		q->_rear = task;
+		q->_rear = q->_rear->next;
 	}
 	return 0;
 }
 
 static task_t *
 queue_pop(queue_t *q) {
-	if (queue_empty(q) == 1)
+	if (queue_empty(q))
 		return NULL;
 	task_t *task = q->_front;
-	if (q->_front == q->_rear) {
+	if (q->_front->next == NULL) {
 		q->_front = q->_rear = NULL;
 	}
 	else {

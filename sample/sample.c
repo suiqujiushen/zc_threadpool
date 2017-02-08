@@ -15,11 +15,14 @@ void func2(void *arg) {
 
 int main()
 {
+	int i;
 	zc_threadpool_t *pool = zc_threadpool_create(3);
-	zc_threadpool_add_task(pool, func1, NULL);
-	zc_threadpool_add_task(pool, func2, NULL);
-	sleep(1);
-	zc_threadpool_destroy(pool);
+	for (i = 0; i < 10; ++i) {
+		zc_threadpool_add_task(pool, func1, NULL);
+		zc_threadpool_add_task(pool, func2, NULL);
+	}
+	zc_threadpool_destroy(pool, GRACEFULLY);
+	//zc_threadpool_destroy(pool, IMMEDIATELY);
 
 	return 0;
 }

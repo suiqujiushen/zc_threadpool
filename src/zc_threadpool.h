@@ -7,6 +7,12 @@
 extern "C" {
 #endif
 
+typedef enum {
+	NOSTOP = 0,
+	IMMEDIATELY,
+	GRACEFULLY
+} shutdown_status_t;
+
 typedef struct _task {
 	void (*_func)(void *arg);
 	void *_arg;
@@ -24,7 +30,7 @@ typedef struct _zc_threadpool {
 	queue_t *_task_queue;
 	pthread_mutex_t _lock;
 	pthread_cond_t _cond;
-	int _stop;
+	shutdown_status_t _shutdown;
 } zc_threadpool_t;
 
 zc_threadpool_t * 
@@ -34,18 +40,8 @@ int
 zc_threadpool_add_task(zc_threadpool_t *pool, 
 	void (*func)(void *arg), void *arg);
 
-/*
-int 
-zc_threadpool_wait(zc_threadpool_t *pool);
-
-int 
-zc_threadpool_pause(zc_threadpool_t *pool);
-
-int zc_threadpool_resume(zc_threadpool_t *pool);
-*/
-
 void 
-zc_threadpool_destroy(zc_threadpool_t *pool);
+zc_threadpool_destroy(zc_threadpool_t *pool, shutdown_status_t shutdown);
 
 #ifdef __cplusplus
 }
